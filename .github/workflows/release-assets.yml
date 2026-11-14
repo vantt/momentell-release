@@ -1,0 +1,167 @@
+# Bản chép từ vantt/momentell bằng scripts/sync-release-repo.sh: sửa ở đó, không sửa ở đây.
+name: Release assets
+
+# Dựng bốn binary `momentell` phát hành, đóng gói bằng scripts/release-assets.sh (tên asset, chạy thử `--version`, kiểm
+# CRT tĩnh trên Windows), chạy thử bộ cài trên runner của chính nền đó (cài mới, nâng từ v0.1.0-rc.4, gỡ, lùi về rc.4),
+# rồi lưu artifact `momentell-<target>`. Job Linux (có trong cả ma trận rút gọn lẫn đầy đủ) dựng thêm plugin Obsidian
+# thành artifact `momentell-obsidian-plugin` (file `pkm-obsidian-plugin.zip` mà `momentell init` tải). Không đăng gì.
+# Gọi từ ci.yml (PR, push lên main, chạy tay) và qua ci.yml từ release.yml (tag), để lỗi đóng gói lộ ra trước khi gắn tag.
+# Mã nguồn lấy như ci.yml: ở repo công khai vantt/momentell-release là vantt/momentell tại `ref`, nơi khác là chính repo.
+# `full` = false (push, PR): chỉ Linux và Windows, gồm cả hai bài thử bộ cài; true: thêm hai binary macOS.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Mã nguồn (rỗng: commit đã kích hoạt workflow)"
+        type: string
+        default: ""
+      full:
+        type: boolean
+        default: true
+    secrets:
+      SOURCE_READ_TOKEN:
+        description: "fine-grained token chỉ đọc Contents của vantt/momentell và vantt/pkm (repo công khai)"
+        required: false
+      PKM_READ_TOKEN:
+        description: "fine-grained token chỉ đọc vantt/pkm (git dependency của apps/momentell)"
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  SOURCE_REPO: ${{ github.repository == 'vantt/momentell-release' && 'vantt/momentell' || github.repository }}
+
+jobs:
+  assets:
+    name: asset ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Bốn đích: x86_64-unknown-linux-gnu (ubuntu-24.04, glibc 2.39 là trần của binary Linux; thử install.sh),
+        # x86_64-apple-darwin (macos-15 arm64, biên dịch chéo, chạy thử qua Rosetta nếu có; không thử bộ cài vì
+        # install.sh trên máy arm64 chọn bản arm64), aarch64-apple-darwin (macos-15; thử install.sh),
+        # x86_64-pc-windows-msvc (windows-2025; thử install.ps1). Không `full` thì bỏ hai đích macOS.
+        include: ${{ fromJSON(inputs.full && '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","installer":"sh"},{"target":"x86_64-apple-darwin","os":"macos-15","installer":"none"},{"target":"aarch64-apple-darwin","os":"macos-15","installer":"sh"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","installer":"ps1"}]' || '[{"target":"x86_64-unknown-linux-gnu","os":"ubuntu-24.04","installer":"sh"},{"target":"x86_64-pc-windows-msvc","os":"windows-2025","installer":"ps1"}]') }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+          persist-credentials: false
+      # Cài đúng toolchain ghi trong rust-toolchain.toml, rồi thêm đích.
+      - run: rustup toolchain install
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: release-${{ matrix.target }}
+      # Mọi action của job ghim SHA: cấu hình git toàn cục có token từ bước này trở đi.
+      - name: Quyền đọc vantt/pkm
+        env:
+          PKM_READ_TOKEN: ${{ secrets.SOURCE_READ_TOKEN || secrets.PKM_READ_TOKEN }}
+        run: |
+          if [ -z "$PKM_READ_TOKEN" ]; then
+            echo "::error::chưa đặt secret SOURCE_READ_TOKEN (repo công khai) hay PKM_READ_TOKEN: cần token chỉ đọc vantt/pkm để cargo lấy pkm-core, pkm-cli, pkm-lifecycle"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${PKM_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      # Không đặt RUSTFLAGS: biến này ghi đè rustflags của .cargo/config.toml (CRT tĩnh cho Windows).
+      - run: cargo build --release --locked --package momentell --target ${{ matrix.target }}
+      - name: Đóng gói và chạy thử
+        id: pack
+        run: |
+          sh scripts/release-assets.sh package "${{ matrix.target }}" out
+          echo "version=v$(sh scripts/release-assets.sh version)" >> "$GITHUB_OUTPUT"
+
+      - name: shellcheck các script
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/*.sh
+      # Bản phát hành cũ để thử nâng từ rc.4 và đường lùi về rc.4. Release rc.4 nằm ở repo mã nguồn (private): đọc bằng
+      # SOURCE_READ_TOKEN ở repo công khai, bằng token của job ở chính repo đó.
+      - name: Fixture v0.1.0-rc.4
+        if: matrix.installer != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+        run: |
+          gh release download v0.1.0-rc.4 --repo "$SOURCE_REPO" --dir "$RUNNER_TEMP/rc4" \
+            --pattern "pkm-${{ matrix.target }}*" --pattern checksums.txt --pattern install.sh --pattern install.ps1
+          ls -l "$RUNNER_TEMP/rc4"
+      - name: Thử vòng đời install.sh
+        if: matrix.installer == 'sh'
+        env:
+          MOMENTELL_RC4_FIXTURE: ${{ runner.temp }}/rc4
+        run: sh scripts/test-installer.sh out "${{ steps.pack.outputs.version }}" </dev/null
+
+      - name: Kiểm cú pháp và PSScriptAnalyzer cho install.ps1
+        if: matrix.installer == 'ps1'
+        shell: powershell # Windows PowerShell 5.1, đúng bản có sẵn trên máy khách
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = $false
+          foreach ($f in Get-ChildItem scripts -Filter *.ps1) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errors)
+            foreach ($e in $errors) { Write-Host "::error file=$($f.Name)::$($e.Message) (line $($e.Extent.StartLineNumber))"; $bad = $true }
+          }
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          $found = @(Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Error, Warning)
+          $found | Format-Table -AutoSize RuleName, Severity, ScriptName, Line, Message | Out-String -Width 200 | Write-Host
+          if (@($found | Where-Object Severity -eq 'Error').Count -gt 0) { $bad = $true }
+          if ($bad) { exit 1 }
+      - name: Thử vòng đời install.ps1
+        if: matrix.installer == 'ps1'
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-installer.ps1 -Fixture out -Version '${{ steps.pack.outputs.version }}' -Rc4Fixture "$env:RUNNER_TEMP\rc4"
+          exit $LASTEXITCODE
+
+      # Plugin Obsidian: một bản cho mọi nền, nên chỉ dựng trên Linux. `build` kiểm phiên bản manifest == crate.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: runner.os == 'Linux'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: runner.os == 'Linux'
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Dựng và đóng gói plugin Obsidian
+        if: runner.os == 'Linux'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter pkm-obsidian-plugin run build
+          sh scripts/release-assets.sh plugin apps/obsidian-plugin/dist plugin-out
+      - name: Thử momentell init với plugin vừa dựng
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          t="$RUNNER_TEMP/setup-smoke"
+          mkdir -p "$t/vault/.obsidian" "$t/plugin" "$t/home"
+          printf 'Xem [[B]].\n' > "$t/vault/A.md"
+          (cd "$t/plugin" && unzip -q "$GITHUB_WORKSPACE/plugin-out/pkm-obsidian-plugin.zip")
+          # Chạy thử (không ghi gì, không tải gì): kiểm zip có đủ ba file và manifest cùng phiên bản binary.
+          HOME="$t/home" XDG_CACHE_HOME="$t/home/cache" out/momentell-${{ matrix.target }} init "$t/vault" \
+            --plugin-dir "$t/plugin" --no-ohs --config "$t/claude_desktop_config.json" --json > "$t/report.json"
+          grep -q '"ok": true' "$t/report.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          name: momentell-obsidian-plugin
+          path: plugin-out/pkm-obsidian-plugin.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: momentell-${{ matrix.target }}
+          path: out/momentell-${{ matrix.target }}*
+          if-no-files-found: error
+          retention-days: 14

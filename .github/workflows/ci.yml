@@ -1,0 +1,118 @@
+# Bản chép từ vantt/momentell bằng scripts/sync-release-repo.sh: sửa ở đó, không sửa ở đây.
+name: CI
+
+# Một file, hai nơi chạy (nguồn ở vantt/momentell; scripts/sync-release-repo.sh chép sang repo công khai
+# vantt/momentell-release, nơi có runner miễn phí):
+# - vantt/momentell: push lên main và PR chạy Linux và Windows (máy khách chính), bỏ qua khi chỉ đổi tài liệu và plan.
+# - vantt/momentell-release: chỉ chạy tay (workflow_dispatch; input `ref` là nhánh, tag hay SHA của vantt/momentell) và
+#   khi release.yml gọi. Không trigger nào chạy cho pull request, để secret không lộ cho fork: script chép bỏ khối giữa
+#   hai dấu `#>>> source repo only` và `#<<< source repo only`, rồi dừng nếu bản chép còn `pull_request` hay `push`.
+# Ma trận đầy đủ có macOS (check và hai binary macOS): khi release.yml gọi (tag) hoặc chạy tay.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Mã nguồn: nhánh, tag hay SHA của vantt/momentell"
+        type: string
+        default: main
+      full:
+        description: "Ma trận đầy đủ, có macOS"
+        type: boolean
+        default: true
+  # release.yml gọi lại toàn bộ CI trước khi đăng.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Mã nguồn (rỗng: commit đã kích hoạt workflow)"
+        type: string
+        default: ""
+      full:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Khi release.yml gọi, github.workflow là "Release": nhóm riêng, không huỷ CI của main và không bị nó huỷ. Ở repo công
+# khai mọi lần chạy tay có cùng github.ref (main của repo đó), nên nhóm theo cả `ref` của mã nguồn.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Repo mã nguồn: ở repo công khai là vantt/momentell (đọc bằng secret SOURCE_READ_TOKEN), nơi khác là chính repo.
+  SOURCE_REPO: ${{ github.repository == 'vantt/momentell-release' && 'vantt/momentell' || github.repository }}
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `inputs.full` rỗng khi push và PR.
+        os: ${{ fromJSON(inputs.full && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    # Cargo lấy `vantt/pkm` (repo private) bằng `git` của máy, qua token chỉ đọc ở bước "Quyền đọc vantt/pkm".
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: true
+    steps:
+      # SOURCE_READ_TOKEN: fine-grained token chỉ đọc Contents của vantt/momentell và vantt/pkm (đặt ở repo công khai).
+      # Không có thì dùng token của job, đọc được chính repo. Không lưu token vào cấu hình git của bản checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+          persist-credentials: false
+      # Cài đúng toolchain và component ghi trong rust-toolchain.toml.
+      - run: rustup toolchain install
+      - run: rustup show
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Token đọc `vantt/pkm`: SOURCE_READ_TOKEN (repo công khai) hoặc PKM_READ_TOKEN (vantt/momentell). Action ở job
+      # này đều ghim SHA vì cấu hình git toàn cục có token từ bước này trở đi.
+      - name: Quyền đọc vantt/pkm
+        shell: bash
+        env:
+          PKM_READ_TOKEN: ${{ secrets.SOURCE_READ_TOKEN || secrets.PKM_READ_TOKEN }}
+        run: |
+          if [ -z "$PKM_READ_TOKEN" ]; then
+            echo "::error::chưa đặt secret SOURCE_READ_TOKEN (repo công khai) hay PKM_READ_TOKEN: cần token chỉ đọc vantt/pkm để cargo lấy pkm-core, pkm-cli, pkm-lifecycle"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${PKM_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - run: cargo fmt --all --check
+        if: runner.os == 'Linux'
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # So khớp với bản Python (kg-solo, golden) nay chạy ở vantt/pkm; ở đây là test của momentell.
+      - run: cargo test --workspace --locked --no-fail-fast
+
+  # Plugin Obsidian (TS): một bản cho mọi nền, chỉ chạy trên Linux. Token chỉ để lấy mã nguồn.
+  plugin:
+    name: obsidian plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter pkm-obsidian-plugin run typecheck
+      - run: pnpm --filter pkm-obsidian-plugin run test
+      # build kiểm phiên bản manifest == Cargo.toml, typecheck, rồi ra dist/.
+      - run: pnpm --filter pkm-obsidian-plugin run build
+
+  # Dựng, đóng gói, chạy thử bốn binary phát hành và thử bộ cài, không đăng gì.
+  assets:
+    uses: ./.github/workflows/release-assets.yml
+    secrets: inherit
+    with:
+      ref: ${{ inputs.ref }}
+      full: ${{ inputs.full == true }}

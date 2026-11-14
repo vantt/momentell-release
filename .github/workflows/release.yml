@@ -1,0 +1,134 @@
+# Bản chép từ vantt/momentell bằng scripts/sync-release-repo.sh: sửa ở đó, không sửa ở đây.
+name: Release
+
+# Tag v* : kiểm tag == phiên bản crate, chạy lại toàn bộ CI (gồm dựng và chạy thử bốn binary và plugin Obsidian, thử bộ cài), gộp
+#          checksums.txt, đóng dấu phiên bản vào bộ cài, rồi đăng GitHub Release.
+# workflow_dispatch : làm y hệt nhưng dừng ở artifact `release-assets`, không tạo Release; input `ref` là mã nguồn.
+# Ở repo công khai vantt/momentell-release (bản chép bằng scripts/sync-release-repo.sh), mã nguồn là vantt/momentell tại
+# cùng tag (scripts/release.sh gắn tag ở cả hai repo), đọc bằng secret SOURCE_READ_TOKEN; Release đăng ở repo công khai.
+# Mọi job sau `verify` dùng đúng commit `verify` đã lấy, dù nhánh nguồn có commit mới trong lúc chạy.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Mã nguồn: nhánh, tag hay SHA của vantt/momentell"
+        type: string
+        default: main
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  SOURCE_REPO: ${{ github.repository == 'vantt/momentell-release' && 'vantt/momentell' || github.repository }}
+
+jobs:
+  verify:
+    name: tag == version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      # Tag: cùng tag ở repo nguồn (refs/tags/…); chạy tay: input `ref`.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.ref || github.ref }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - id: v
+        name: So tag với phiên bản trong Cargo.toml
+        run: |
+          set -euo pipefail
+          version="v$(sh scripts/release-assets.sh version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME khác phiên bản crate $version ([workspace.package] version)"
+            exit 1
+          fi
+          echo "phiên bản: $version (ref $GITHUB_REF_NAME, mã nguồn $SOURCE_REPO@$(git rev-parse HEAD))"
+
+  # Toàn bộ CI: fmt, clippy, test ba nền, so khớp, và release-assets.yml (dựng, chạy thử, thử bộ cài, artifact).
+  ci:
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    with:
+      ref: ${{ needs.verify.outputs.sha }}
+
+  package:
+    name: checksums và bộ cài
+    needs: [verify, ci]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ needs.verify.outputs.sha }}
+          token: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: out
+          pattern: momentell-*
+          merge-multiple: true
+      - name: Đóng dấu bộ cài, gộp checksums.txt
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          sh scripts/release-assets.sh stamp "$VERSION" scripts/install.sh out/install.sh
+          sh scripts/release-assets.sh stamp "$VERSION" scripts/install.ps1 out/install.ps1
+          for t in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            f="out/$(sh scripts/release-assets.sh asset-name "$t")"
+            [ -s "$f" ] || { echo "::error::thiếu $f"; exit 1; }
+          done
+          [ -s out/pkm-obsidian-plugin.zip ] || { echo "::error::thiếu out/pkm-obsidian-plugin.zip"; exit 1; }
+          # 4 binary + plugin Obsidian + install.sh + install.ps1; checksums.txt là file thứ 8.
+          sh scripts/release-assets.sh checksums out 7
+          ls -l out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    name: đăng release
+    # Chỉ repo công khai đăng Release: tag ở repo nguồn không tạo bản phát hành thứ hai.
+    if: github.ref_type == 'tag' && github.repository == 'vantt/momentell-release'
+    needs: [verify, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: out
+      - name: Kiểm checksums.txt trước khi đăng
+        working-directory: out
+        run: |
+          set -euo pipefail
+          sha256sum -c --strict checksums.txt
+          [ "$(find . -maxdepth 1 -type f | wc -l)" -eq 8 ] || { echo "::error::cần 8 file"; ls -l; exit 1; }
+      - name: Tạo GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          pre=()
+          case "$TAG" in *-*) pre=(--prerelease) ;; esac   # v0.2.0-rc.1 không thành "latest"
+          gh release create "$TAG" out/* --title "$TAG" --generate-notes --verify-tag "${pre[@]}"
