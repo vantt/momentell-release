@@ -1,7 +1,7 @@
 # Bản chép từ vantt/momentell bằng scripts/sync-release-repo.sh: sửa ở đó, không sửa ở đây.
 name: Release
 
-# Tag v* : kiểm tag == phiên bản crate, chạy lại toàn bộ CI (gồm dựng và chạy thử bốn binary và plugin Obsidian, thử bộ cài), gộp
+# Tag v* : kiểm tag == phiên bản crate, chạy lại toàn bộ CI (gồm dựng và chạy thử ba binary và plugin Obsidian, thử bộ cài), gộp
 #          checksums.txt, đóng dấu phiên bản vào bộ cài, rồi đăng GitHub Release.
 # workflow_dispatch : làm y hệt nhưng dừng ở artifact `release-assets`, không tạo Release; input `ref` là mã nguồn.
 # Ở repo công khai vantt/momentell-release (bản chép bằng scripts/sync-release-repo.sh), mã nguồn là vantt/momentell tại
@@ -89,13 +89,13 @@ jobs:
           set -euo pipefail
           sh scripts/release-assets.sh stamp "$VERSION" scripts/install.sh out/install.sh
           sh scripts/release-assets.sh stamp "$VERSION" scripts/install.ps1 out/install.ps1
-          for t in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+          for t in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
             f="out/$(sh scripts/release-assets.sh asset-name "$t")"
             [ -s "$f" ] || { echo "::error::thiếu $f"; exit 1; }
           done
           [ -s out/momentell-obsidian-plugin.zip ] || { echo "::error::thiếu out/momentell-obsidian-plugin.zip"; exit 1; }
-          # 4 binary + plugin Obsidian + install.sh + install.ps1; checksums.txt là file thứ 8.
-          sh scripts/release-assets.sh checksums out 7
+          # 3 binary + plugin Obsidian + install.sh + install.ps1; checksums.txt là file thứ 7.
+          sh scripts/release-assets.sh checksums out 6
           ls -l out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

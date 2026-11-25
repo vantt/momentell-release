@@ -7,7 +7,7 @@ name: CI
 # - vantt/momentell-release: chỉ chạy tay (workflow_dispatch; input `ref` là nhánh, tag hay SHA của vantt/momentell) và
 #   khi release.yml gọi. Không trigger nào chạy cho pull request, để secret không lộ cho fork: script chép bỏ khối giữa
 #   hai dấu `#>>> source repo only` và `#<<< source repo only`, rồi dừng nếu bản chép còn `pull_request` hay `push`.
-# Ma trận đầy đủ có macOS (check và hai binary macOS): khi release.yml gọi (tag) hoặc chạy tay.
+# Ma trận đầy đủ có macOS (check và binary macOS chip Apple): khi release.yml gọi (tag) hoặc chạy tay.
 on:
   workflow_dispatch:
     inputs:
@@ -81,6 +81,11 @@ jobs:
             exit 1
           fi
           git config --global url."https://x-access-token:${PKM_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      # ONNX Runtime CRT tĩnh cho Windows (scripts/ort-lib.sh); nền khác ort-sys tự tải bản dựng sẵn.
+      - name: ONNX Runtime
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "ORT_LIB_LOCATION=$(sh scripts/ort-lib.sh x86_64-pc-windows-msvc)" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
         if: runner.os == 'Linux'
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -109,7 +114,7 @@ jobs:
       # build kiểm phiên bản manifest == Cargo.toml, typecheck, rồi ra dist/.
       - run: pnpm --filter momentell-obsidian-plugin run build
 
-  # Dựng, đóng gói, chạy thử bốn binary phát hành và thử bộ cài, không đăng gì.
+  # Dựng, đóng gói, chạy thử ba binary phát hành và thử bộ cài, không đăng gì.
   assets:
     uses: ./.github/workflows/release-assets.yml
     secrets: inherit
