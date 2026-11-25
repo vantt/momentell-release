@@ -77,6 +77,15 @@ jobs:
         run: |
           dir=$(sh scripts/ort-lib.sh "${{ matrix.target }}")
           if [ -n "$dir" ]; then echo "ORT_LIB_LOCATION=$dir" >> "$GITHUB_ENV"; fi
+      # Extension Chrome của Browser Worker nhúng vào binary (scripts/bw-extension.sh, ghim tag + sha256). Release của
+      # vantt/browser-worker là private: đọc bằng SOURCE_READ_TOKEN (phải đọc được cả vantt/browser-worker).
+      - name: Extension Browser Worker
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+        run: |
+          zip=$(sh scripts/bw-extension.sh)
+          if [ ! -f "$zip" ]; then echo "::error::không có extension Browser Worker: bản phát hành luôn nhúng nó"; exit 1; fi
+          echo "MOMENTELL_BW_EXTENSION_ZIP=$zip" >> "$GITHUB_ENV"
       # Không đặt RUSTFLAGS: biến này ghi đè rustflags của .cargo/config.toml (CRT tĩnh cho Windows).
       - run: cargo build --release --locked --package momentell --target ${{ matrix.target }}
       - name: Đóng gói và chạy thử

@@ -86,6 +86,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: echo "ORT_LIB_LOCATION=$(sh scripts/ort-lib.sh x86_64-pc-windows-msvc)" >> "$GITHUB_ENV"
+      # Extension Chrome của Browser Worker nhúng vào binary (scripts/bw-extension.sh, ghim tag + sha256). Release của
+      # vantt/browser-worker là private: đọc bằng SOURCE_READ_TOKEN (phải đọc được cả vantt/browser-worker).
+      - name: Extension Browser Worker
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_READ_TOKEN || github.token }}
+        run: echo "MOMENTELL_BW_EXTENSION_ZIP=$(sh scripts/bw-extension.sh)" >> "$GITHUB_ENV"
       - run: cargo fmt --all --check
         if: runner.os == 'Linux'
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
