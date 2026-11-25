@@ -104,10 +104,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter pkm-obsidian-plugin run typecheck
-      - run: pnpm --filter pkm-obsidian-plugin run test
+      - run: pnpm --filter momentell-obsidian-plugin run typecheck
+      - run: pnpm --filter momentell-obsidian-plugin run test
       # build kiểm phiên bản manifest == Cargo.toml, typecheck, rồi ra dist/.
-      - run: pnpm --filter pkm-obsidian-plugin run build
+      - run: pnpm --filter momentell-obsidian-plugin run build
 
   # Dựng, đóng gói, chạy thử bốn binary phát hành và thử bộ cài, không đăng gì.
   assets:

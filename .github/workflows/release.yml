@@ -93,7 +93,7 @@ jobs:
             f="out/$(sh scripts/release-assets.sh asset-name "$t")"
             [ -s "$f" ] || { echo "::error::thiếu $f"; exit 1; }
           done
-          [ -s out/pkm-obsidian-plugin.zip ] || { echo "::error::thiếu out/pkm-obsidian-plugin.zip"; exit 1; }
+          [ -s out/momentell-obsidian-plugin.zip ] || { echo "::error::thiếu out/momentell-obsidian-plugin.zip"; exit 1; }
           # 4 binary + plugin Obsidian + install.sh + install.ps1; checksums.txt là file thứ 8.
           sh scripts/release-assets.sh checksums out 7
           ls -l out

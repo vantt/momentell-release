@@ -4,7 +4,7 @@ name: Release assets
 # Dựng bốn binary `momentell` phát hành, đóng gói bằng scripts/release-assets.sh (tên asset, chạy thử `--version`, kiểm
 # CRT tĩnh trên Windows), chạy thử bộ cài trên runner của chính nền đó (cài mới, nâng từ v0.1.0-rc.4, gỡ, lùi về rc.4),
 # rồi lưu artifact `momentell-<target>`. Job Linux (có trong cả ma trận rút gọn lẫn đầy đủ) dựng thêm plugin Obsidian
-# thành artifact `momentell-obsidian-plugin` (file `pkm-obsidian-plugin.zip` mà `momentell init` tải). Không đăng gì.
+# thành artifact `momentell-obsidian-plugin` (file `momentell-obsidian-plugin.zip` mà `momentell init` tải). Không đăng gì.
 # Gọi từ ci.yml (PR, push lên main, chạy tay) và qua ci.yml từ release.yml (tag), để lỗi đóng gói lộ ra trước khi gắn tag.
 # Mã nguồn lấy như ci.yml: ở repo công khai vantt/momentell-release là vantt/momentell tại `ref`, nơi khác là chính repo.
 # `full` = false (push, PR): chỉ Linux và Windows, gồm cả hai bài thử bộ cài; true: thêm hai binary macOS.
@@ -137,7 +137,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter pkm-obsidian-plugin run build
+          pnpm --filter momentell-obsidian-plugin run build
           sh scripts/release-assets.sh plugin apps/obsidian-plugin/dist plugin-out
       - name: Thử momentell init với plugin vừa dựng
         if: runner.os == 'Linux'
@@ -146,7 +146,7 @@ jobs:
           t="$RUNNER_TEMP/setup-smoke"
           mkdir -p "$t/vault/.obsidian" "$t/plugin" "$t/home"
           printf 'Xem [[B]].\n' > "$t/vault/A.md"
-          (cd "$t/plugin" && unzip -q "$GITHUB_WORKSPACE/plugin-out/pkm-obsidian-plugin.zip")
+          (cd "$t/plugin" && unzip -q "$GITHUB_WORKSPACE/plugin-out/momentell-obsidian-plugin.zip")
           # Chạy thử (không ghi gì, không tải gì): kiểm zip có đủ ba file và manifest cùng phiên bản binary.
           HOME="$t/home" XDG_CACHE_HOME="$t/home/cache" out/momentell-${{ matrix.target }} init "$t/vault" \
             --plugin-dir "$t/plugin" --no-ohs --config "$t/claude_desktop_config.json" --json > "$t/report.json"
@@ -155,7 +155,7 @@ jobs:
         if: runner.os == 'Linux'
         with:
           name: momentell-obsidian-plugin
-          path: plugin-out/pkm-obsidian-plugin.zip
+          path: plugin-out/momentell-obsidian-plugin.zip
           if-no-files-found: error
           retention-days: 14
 
