@@ -121,7 +121,8 @@ jobs:
         run: |
           set -euo pipefail
           sha256sum -c --strict checksums.txt
-          [ "$(find . -maxdepth 1 -type f | wc -l)" -eq 8 ] || { echo "::error::cần 8 file"; ls -l; exit 1; }
+          # Ba binary (linux x64, macOS arm64, Windows x64), plugin Obsidian, install.sh, install.ps1, checksums.txt.
+          [ "$(find . -maxdepth 1 -type f | wc -l)" -eq 7 ] || { echo "::error::cần 7 file"; ls -l; exit 1; }
       - name: Tạo GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
